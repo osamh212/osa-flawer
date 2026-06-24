@@ -726,33 +726,33 @@ footer .footer-links a:hover { color: #fff; }
 
   async function extractFrames() {
     try {
-      const res  = await fetch(VIDEO_URL, { mode: 'cors' });
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const vid  = Object.assign(document.createElement('video'), {
-        muted: true, playsInline: true, crossOrigin: 'anonymous', preload: 'auto', src: url
+      // Stream the video directly instead of downloading the whole file
+      // first — fetching the full blob before extracting froze the page.
+      const vid = Object.assign(document.createElement('video'), {
+        muted: true, playsInline: true, crossOrigin: 'anonymous', preload: 'auto', src: VIDEO_URL
       });
       await new Promise((ok, fail) => {
         vid.onloadedmetadata = ok;
         vid.onerror = fail;
         setTimeout(fail, 15000);
       });
-      const scale = Math.min(1, 1280 / vid.videoWidth);
+      const scale = Math.min(1, 960 / vid.videoWidth);
       const sw    = Math.round(vid.videoWidth  * scale);
       const sh    = Math.round(vid.videoHeight * scale);
-      const total = Math.max(60, Math.min(150, Math.round(vid.duration * 30)));
+      const total = Math.max(36, Math.min(60, Math.round(vid.duration * 12)));
       for (let i = 0; i < total; i++) {
         const t = (i / (total - 1)) * (vid.duration - 0.05);
         vid.currentTime = t;
         await new Promise((ok) => {
           const fn = () => { vid.removeEventListener('seeked', fn); ok(); };
           vid.addEventListener('seeked', fn);
-          setTimeout(ok, 3000);
+          setTimeout(ok, 1200);
         });
         frames.push(await createImageBitmap(vid, { resizeWidth: sw, resizeHeight: sh }));
+        // yield to the main thread between frames so scrolling stays smooth
+        await new Promise(r => requestAnimationFrame(r));
       }
       if (frames.length) { framesReady = true; canvas.style.visibility = 'visible'; videoEl.style.display = 'none'; }
-      URL.revokeObjectURL(url);
     } catch (_) {}
   }
 
