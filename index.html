@@ -382,7 +382,6 @@ footer .footer-links a:hover { color: #fff; }
 
 <!-- ── Scroll Video Background ── -->
 <div id="scroll-video-container">
-  <canvas id="video-canvas" style="visibility:hidden;"></canvas>
   <video id="video-fallback" muted playsinline preload="auto" crossorigin="anonymous"
     src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260616_212935_bbf608da-62d1-4f25-9be4-c346e4d09cc8.mp4"
   ></video>
@@ -709,52 +708,13 @@ footer .footer-links a:hover { color: #fff; }
 
   /* ══════════════════════════════════════════
      SCROLL VIDEO
+     Drives the <video> element's currentTime directly from scroll
+     position. No frame extraction, no background video clone — that
+     was the source of the freeze (it hammered the decoder while the
+     user was trying to scroll). This is much lighter.
   ══════════════════════════════════════════ */
-  const VIDEO_URL = 'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260616_212935_bbf608da-62d1-4f25-9be4-c346e4d09cc8.mp4';
-  const canvas  = document.getElementById('video-canvas');
   const videoEl = document.getElementById('video-fallback');
-  const ctx     = canvas.getContext('2d');
-  let frames = [], framesReady = false, lastIdx = -1, seeking = false;
-  let smoothVideoProgress = 0;
-
-  function resizeCanvas() {
-    const dpr = Math.min(devicePixelRatio, 2);
-    const w = Math.round(window.innerWidth  * dpr);
-    const h = Math.round(window.innerHeight * dpr);
-    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; lastIdx = -1; }
-  }
-
-  async function extractFrames() {
-    try {
-      // Stream the video directly instead of downloading the whole file
-      // first — fetching the full blob before extracting froze the page.
-      const vid = Object.assign(document.createElement('video'), {
-        muted: true, playsInline: true, crossOrigin: 'anonymous', preload: 'auto', src: VIDEO_URL
-      });
-      await new Promise((ok, fail) => {
-        vid.onloadedmetadata = ok;
-        vid.onerror = fail;
-        setTimeout(fail, 15000);
-      });
-      const scale = Math.min(1, 960 / vid.videoWidth);
-      const sw    = Math.round(vid.videoWidth  * scale);
-      const sh    = Math.round(vid.videoHeight * scale);
-      const total = Math.max(36, Math.min(60, Math.round(vid.duration * 12)));
-      for (let i = 0; i < total; i++) {
-        const t = (i / (total - 1)) * (vid.duration - 0.05);
-        vid.currentTime = t;
-        await new Promise((ok) => {
-          const fn = () => { vid.removeEventListener('seeked', fn); ok(); };
-          vid.addEventListener('seeked', fn);
-          setTimeout(ok, 1200);
-        });
-        frames.push(await createImageBitmap(vid, { resizeWidth: sw, resizeHeight: sh }));
-        // yield to the main thread between frames so scrolling stays smooth
-        await new Promise(r => requestAnimationFrame(r));
-      }
-      if (frames.length) { framesReady = true; canvas.style.visibility = 'visible'; videoEl.style.display = 'none'; }
-    } catch (_) {}
-  }
+  let seeking = false;
 
   function getRawScrollProgress() {
     const vh    = window.innerHeight;
@@ -763,18 +723,10 @@ footer .footer-links a:hover { color: #fff; }
     return clamp((window.scrollY - start) / Math.max(1, end - start), 0, 1);
   }
 
-  function drawFrame(f) {
-    const cw = canvas.width, ch = canvas.height;
-    const s  = Math.max(cw / f.width, ch / f.height);
-    ctx.drawImage(f, (cw - f.width * s) / 2, (ch - f.height * s) / 2, f.width * s, f.height * s);
-  }
-
-  videoEl.addEventListener('seeked',     () => { seeking = false; });
-  videoEl.addEventListener('stalled',    () => { seeking = false; });
+  videoEl.addEventListener('seeked',  () => { seeking = false; });
+  videoEl.addEventListener('stalled', () => { seeking = false; });
+  videoEl.addEventListener('error',   () => { seeking = false; });
   videoEl.addEventListener('loadeddata', () => { videoEl.currentTime = 0; });
-  resizeCanvas();
-  window.addEventListener('resize', resizeCanvas, { passive: true });
-  extractFrames();
 
   /* ══════════════════════════════════════════
      PARTICLES
@@ -875,12 +827,9 @@ footer .footer-links a:hover { color: #fff; }
     const rawVid = getRawScrollProgress();
     lVideoProgress = lerp(lVideoProgress, rawVid, LERP_SPEED);
 
-    if (framesReady && frames.length) {
-      const i = Math.round(lVideoProgress * (frames.length - 1));
-      if (i !== lastIdx) { lastIdx = i; if (frames[i]) drawFrame(frames[i]); }
-    } else if (videoEl.duration && isFinite(videoEl.duration) && videoEl.readyState >= 1) {
+    if (videoEl.duration && isFinite(videoEl.duration) && videoEl.readyState >= 1) {
       const t = lVideoProgress * videoEl.duration;
-      if (!seeking && Math.abs(videoEl.currentTime - t) > 0.05) { seeking = true; videoEl.currentTime = t; }
+      if (!seeking && Math.abs(videoEl.currentTime - t) > 0.08) { seeking = true; videoEl.currentTime = t; }
     }
 
     /* ── PARTICLES ── */
